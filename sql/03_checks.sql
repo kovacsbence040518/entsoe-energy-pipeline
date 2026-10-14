@@ -1,0 +1,331 @@
+
+USE WAREHOUSE ENERGY_WH;
+USE DATABASE ENERGY_DB;
+
+
+-- ==========================================================
+-- 1. DATA COMPLETENESS
+-- ==========================================================
+
+-- Day-ahead prices: row count and price range per country
+SELECT
+    COUNTRY_CODE,
+    COUNT(*),
+    MIN(PRICE_EUR_MWH),
+    MAX(PRICE_EUR_MWH)
+FROM RAW.DAY_AHEAD_PRICES
+GROUP BY COUNTRY_CODE;
+
+-- List RAW tables
+SHOW TABLES IN SCHEMA ENERGY_DB.RAW;
+
+-- Row count and date coverage for all four datasets
+SELECT
+    'LOAD' AS DATASET,
+    COUNT(*) AS TOTAL_ROWS,
+    COUNT(DISTINCT DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))) AS DAYS,
+    MIN(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))) AS FIRST_DATE,
+    MAX(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))) AS LAST_DATE
+FROM RAW.LOAD
+
+UNION ALL
+
+SELECT
+    'LOAD_FORECAST',
+    COUNT(*),
+    COUNT(DISTINCT DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))),
+    MIN(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))),
+    MAX(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP)))
+FROM RAW.LOAD_FORECAST
+
+UNION ALL
+
+SELECT
+    'DAY_AHEAD_PRICES',
+    COUNT(*),
+    COUNT(DISTINCT DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))),
+    MIN(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))),
+    MAX(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP)))
+FROM RAW.DAY_AHEAD_PRICES
+
+UNION ALL
+
+SELECT
+    'GENERATION',
+    COUNT(*),
+    COUNT(DISTINCT DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))),
+    MIN(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP))),
+    MAX(DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP)))
+FROM RAW.GENERATION;
+
+-- Actual load coverage per country
+SELECT
+    COUNTRY_CODE,
+    COUNT(*) AS ROW_COUNT,
+    MIN(TIMESTAMP) AS FIRST_TIMESTAMP,
+    MAX(TIMESTAMP) AS LAST_TIMESTAMP
+FROM ENERGY_DB.RAW.LOAD
+GROUP BY COUNTRY_CODE
+ORDER BY COUNTRY_CODE;
+
+-- Daily price record counts
+SELECT
+    COUNTRY_CODE,
+    TO_DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP)) AS DATE,
+    COUNT(*) AS PRICE_RECORDS
+FROM ENERGY_DB.RAW.DAY_AHEAD_PRICES
+GROUP BY COUNTRY_CODE, DATE
+ORDER BY COUNTRY_CODE, DATE;
+
+
+-- ==========================================================
+-- 2. UNIQUE KEYS AND DUPLICATES
+-- ==========================================================
+
+-- Compare total rows with unique records in all datasets
+SELECT
+    'LOAD' AS DATASET,
+    COUNT(*) AS TOTAL_ROWS,
+    COUNT(DISTINCT COUNTRY_CODE || '|' || TIMESTAMP::VARCHAR) AS UNIQUE_RECORDS
+FROM RAW.LOAD
+
+UNION ALL
+
+SELECT
+    'LOAD_FORECAST',
+    COUNT(*),
+    COUNT(DISTINCT COUNTRY_CODE || '|' || TIMESTAMP::VARCHAR)
+FROM RAW.LOAD_FORECAST
+
+UNION ALL
+
+SELECT
+    'DAY_AHEAD_PRICES',
+    COUNT(*),
+    COUNT(DISTINCT COUNTRY_CODE || '|' || TIMESTAMP::VARCHAR)
+FROM RAW.DAY_AHEAD_PRICES
+
+UNION ALL
+
+SELECT
+    'GENERATION',
+    COUNT(*),
+    COUNT(DISTINCT COUNTRY_CODE || '|' || TIMESTAMP::VARCHAR || '|' || ENERGY_SOURCE)
+FROM RAW.GENERATION;
+
+-- Check duplicate country-timestamp keys before joining tables
+SELECT
+    'LOAD' AS TABLE_NAME,
+    COUNTRY_CODE,
+    TIMESTAMP,
+    COUNT(*) AS RECORD_COUNT
+FROM RAW.LOAD
+GROUP BY COUNTRY_CODE, TIMESTAMP
+HAVING COUNT(*) > 1
+
+UNION ALL
+
+SELECT
+    'DAY_AHEAD_PRICES' AS TABLE_NAME,
+    COUNTRY_CODE,
+    TIMESTAMP,
+    COUNT(*) AS RECORD_COUNT
+FROM RAW.DAY_AHEAD_PRICES
+GROUP BY COUNTRY_CODE, TIMESTAMP
+HAVING COUNT(*) > 1
+
+ORDER BY TABLE_NAME, COUNTRY_CODE, TIMESTAMP;
+
+-- Check duplicate forecast records
+SELECT
+    COUNTRY_CODE,
+    TIMESTAMP,
+    COUNT(*) AS DUPLICATE_COUNT
+FROM RAW.LOAD_FORECAST
+GROUP BY COUNTRY_CODE, TIMESTAMP
+HAVING COUNT(*) > 1
+ORDER BY COUNTRY_CODE, TIMESTAMP;
+
+-- Check duplicate generation records
+SELECT
+    COUNTRY_CODE,
+    TIMESTAMP,
+    ENERGY_SOURCE,
+    COUNT(*) AS DUPLICATE_COUNT
+FROM RAW.GENERATION
+GROUP BY COUNTRY_CODE, TIMESTAMP, ENERGY_SOURCE
+HAVING COUNT(*) > 1
+ORDER BY COUNTRY_CODE, TIMESTAMP, ENERGY_SOURCE;
+
+
+-- ==========================================================
+-- 3. TIME INTERVAL VALIDATION
+-- ==========================================================
+
+-- Check 15-minute continuity of actual load data
+WITH intervals AS (
+    SELECT
+        COUNTRY_CODE,
+        TIMESTAMP,
+        LAG(TIMESTAMP) OVER (
+            PARTITION BY COUNTRY_CODE
+            ORDER BY TIMESTAMP
+        ) AS PREVIOUS_TIMESTAMP
+    FROM RAW.LOAD
+)
+SELECT
+    COUNTRY_CODE,
+    COUNT_IF(
+        DATEDIFF('minute', PREVIOUS_TIMESTAMP, TIMESTAMP) != 15
+    ) AS INVALID_INTERVALS
+FROM intervals
+WHERE PREVIOUS_TIMESTAMP IS NOT NULL
+GROUP BY COUNTRY_CODE
+ORDER BY COUNTRY_CODE;
+
+-- Investigate missing generation intervals in Slovakia on 2026-09-08
+WITH expected AS (
+    SELECT
+        DATEADD(
+            minute,
+            (ROW_NUMBER() OVER (ORDER BY SEQ4()) - 1) * 15,
+            '2026-09-08 00:00:00'::TIMESTAMP_NTZ
+        ) AS LOCAL_TIME
+    FROM TABLE(GENERATOR(ROWCOUNT => 96))
+),
+actual AS (
+    SELECT DISTINCT
+        CONVERT_TIMEZONE(
+            'Europe/Budapest',
+            TIMESTAMP
+        )::TIMESTAMP_NTZ AS LOCAL_TIME
+    FROM ENERGY_DB.RAW.GENERATION
+    WHERE COUNTRY_CODE = 'SK'
+      AND TO_DATE(
+          CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP)
+      ) = '2026-09-08'
+)
+SELECT e.LOCAL_TIME AS MISSING_TIMESTAMP
+FROM expected e
+LEFT JOIN actual a
+    ON e.LOCAL_TIME = a.LOCAL_TIME
+WHERE a.LOCAL_TIME IS NULL
+ORDER BY e.LOCAL_TIME;
+
+-- Check generation interval coverage with daylight saving time
+WITH daily_intervals AS (
+    SELECT
+        COUNTRY_CODE,
+        TO_DATE(CONVERT_TIMEZONE('Europe/Budapest', TIMESTAMP)) AS LOCAL_DATE,
+        COUNT(DISTINCT TIMESTAMP) AS ACTUAL_INTERVALS
+    FROM RAW.GENERATION
+    GROUP BY COUNTRY_CODE, LOCAL_DATE
+),
+expected_intervals AS (
+    SELECT
+        COUNTRY_CODE,
+        LOCAL_DATE,
+        ACTUAL_INTERVALS,
+        DATEDIFF(
+            'minute',
+            CONVERT_TIMEZONE(
+                'Europe/Budapest',
+                'UTC',
+                LOCAL_DATE::TIMESTAMP_NTZ
+            ),
+            CONVERT_TIMEZONE(
+                'Europe/Budapest',
+                'UTC',
+                DATEADD(day, 1, LOCAL_DATE)::TIMESTAMP_NTZ
+            )
+        ) / 15 AS EXPECTED_INTERVALS
+    FROM daily_intervals
+)
+SELECT
+    COUNTRY_CODE,
+    LOCAL_DATE,
+    ACTUAL_INTERVALS,
+    EXPECTED_INTERVALS,
+    EXPECTED_INTERVALS - ACTUAL_INTERVALS AS MISSING_INTERVALS
+FROM expected_intervals
+WHERE ACTUAL_INTERVALS <> EXPECTED_INTERVALS
+ORDER BY COUNTRY_CODE, LOCAL_DATE;
+
+
+-- ==========================================================
+-- 4. DATA QUALITY
+-- ==========================================================
+
+-- Check missing and invalid actual load values
+SELECT
+    COUNTRY_CODE,
+    COUNT(*) AS TOTAL_ROWS,
+    COUNT_IF(ACTUAL_LOAD_MW IS NULL) AS MISSING_VALUES,
+    COUNT_IF(ACTUAL_LOAD_MW <= 0) AS INVALID_VALUES
+FROM ENERGY_DB.RAW.LOAD
+GROUP BY COUNTRY_CODE
+ORDER BY COUNTRY_CODE;
+
+-- Check missing and invalid forecast values
+SELECT
+    COUNTRY_CODE,
+    COUNT(*) AS TOTAL_ROWS,
+    COUNT_IF(FORECAST_LOAD_MW IS NULL) AS MISSING_VALUES,
+    COUNT_IF(FORECAST_LOAD_MW <= 0) AS INVALID_VALUES
+FROM ENERGY_DB.RAW.LOAD_FORECAST
+GROUP BY COUNTRY_CODE
+ORDER BY COUNTRY_CODE;
+
+-- Check missing and negative generation values
+SELECT
+    COUNTRY_CODE,
+    ENERGY_SOURCE,
+    COUNT(*) AS TOTAL_ROWS,
+    COUNT_IF(GENERATION_MW IS NULL) AS MISSING_VALUES,
+    COUNT_IF(GENERATION_MW < 0) AS INVALID_VALUES
+FROM ENERGY_DB.RAW.GENERATION
+GROUP BY COUNTRY_CODE, ENERGY_SOURCE
+HAVING COUNT_IF(GENERATION_MW IS NULL) > 0
+    OR COUNT_IF(GENERATION_MW < 0) > 0
+ORDER BY COUNTRY_CODE, ENERGY_SOURCE;
+
+-- Check missing values and negative electricity prices
+-- Negative market prices are valid and are reported separately
+SELECT
+    COUNTRY_CODE,
+    COUNT(*) AS TOTAL_ROWS,
+    COUNT_IF(PRICE_EUR_MWH IS NULL) AS MISSING_VALUES,
+    COUNT_IF(PRICE_EUR_MWH < 0) AS NEGATIVE_PRICES
+FROM ENERGY_DB.RAW.DAY_AHEAD_PRICES
+GROUP BY COUNTRY_CODE
+ORDER BY COUNTRY_CODE;
+
+
+-- ==========================================================
+-- 5. ENERGY SOURCE CLASSIFICATION
+-- ==========================================================
+
+-- List all reported energy sources
+SELECT DISTINCT ENERGY_SOURCE
+FROM RAW.GENERATION
+ORDER BY 1;
+
+-- How every reported energy source is classified (UNMAPPED = missing from the mapping table)
+SELECT
+    g.ENERGY_SOURCE,
+    COALESCE(c.ENERGY_CATEGORY, 'UNMAPPED') AS ENERGY_CATEGORY,
+    COUNT(*) AS RECORD_COUNT
+FROM RAW.GENERATION g
+LEFT JOIN ANALYTICS.ENERGY_SOURCE_CATEGORY c
+  ON g.ENERGY_SOURCE = c.ENERGY_SOURCE
+GROUP BY g.ENERGY_SOURCE, COALESCE(c.ENERGY_CATEGORY, 'UNMAPPED')
+ORDER BY ENERGY_CATEGORY, g.ENERGY_SOURCE;
+
+-- Must return no rows: sources that are not in the mapping table
+SELECT DISTINCT g.ENERGY_SOURCE
+FROM RAW.GENERATION g
+LEFT JOIN ANALYTICS.ENERGY_SOURCE_CATEGORY c
+  ON g.ENERGY_SOURCE = c.ENERGY_SOURCE
+WHERE c.ENERGY_SOURCE IS NULL;
+
+============================================================================
