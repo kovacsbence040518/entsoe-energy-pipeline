@@ -1,0 +1,32 @@
+
+# Virtual environments
+.venv/
+venv/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Generated datasets
+data/
+
+# Git
+.git/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Airflow runtime files
+airflow/logs/
+
+# Logs
+*.log
+
+# Local development files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
