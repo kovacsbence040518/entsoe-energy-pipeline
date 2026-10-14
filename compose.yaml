@@ -1,0 +1,27 @@
+
+services:
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: energy-airflow
+    user: "50000:0"
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/db/airflow.db
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/airflow/project/src
+      - ./data:/opt/airflow/project/data
+      - airflow_db:/opt/airflow/db
+    ports:
+      - "8080:8080"
+    command: standalone
+    restart: "no"
+
+volumes:
+  airflow_db:
