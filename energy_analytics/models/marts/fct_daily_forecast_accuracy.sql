@@ -1,0 +1,26 @@
+
+{{ config(materialized='view') }}
+
+SELECT
+    COUNTRY_CODE,
+
+    CONVERT_TIMEZONE(
+        'Europe/Budapest',
+        TIMESTAMP_UTC
+    )::DATE AS DATE,
+
+    COUNT(*) AS OBSERVATION_COUNT,
+
+    AVG(ABSOLUTE_ERROR_MW) AS MAE_MW,
+
+    SQRT(AVG(POWER(FORECAST_ERROR_MW, 2))) AS RMSE_MW,
+
+    AVG(ABSOLUTE_PERCENTAGE_ERROR) AS MAPE_PERCENT,
+
+    AVG(FORECAST_ERROR_MW) AS BIAS_MW
+
+FROM {{ ref('fct_forecast_errors') }}
+
+GROUP BY
+    COUNTRY_CODE,
+    DATE

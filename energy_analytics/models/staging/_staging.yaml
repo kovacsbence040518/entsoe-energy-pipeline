@@ -1,0 +1,39 @@
+
+version: 2
+
+models:
+  - name: stg_load
+    description: "Actual electricity consumption from ENTSO-E."
+    columns:
+      - name: TIMESTAMP_UTC
+        data_tests:
+          - not_null
+
+      - name: COUNTRY_CODE
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['HU', 'AT', 'SK']
+
+      - name: ACTUAL_LOAD_MW
+        data_tests:
+          - not_null
+
+  - name: stg_load_forecast
+    description: "Official electricity demand forecasts from ENTSO-E."
+    columns:
+      - name: TIMESTAMP_UTC
+        data_tests:
+          - not_null
+
+      - name: COUNTRY_CODE
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['HU', 'AT', 'SK']
+
+      - name: FORECAST_LOAD_MW
+        data_tests:
+          - not_null

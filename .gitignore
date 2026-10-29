@@ -33,3 +33,8 @@ airflow/standalone_admin_password.txt
 .idea/
 .DS_Store
 Thumbs.db
+
+# dbt generated files
+**/target/
+**/dbt_packages/
+**/logs/

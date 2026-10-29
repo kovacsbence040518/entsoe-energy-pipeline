@@ -1,0 +1,20 @@
+
+SELECT
+    COUNTRY_CODE,
+    DATE,
+    MAE_MW,
+    RMSE_MW,
+    MAPE_PERCENT,
+    OBSERVATION_COUNT
+
+FROM {{ ref('fct_daily_forecast_accuracy') }}
+
+WHERE
+    MAE_MW IS NULL
+    OR RMSE_MW IS NULL
+    OR MAPE_PERCENT IS NULL
+    OR OBSERVATION_COUNT <= 0
+    OR MAE_MW < 0
+    OR RMSE_MW < 0
+    OR MAPE_PERCENT < 0
+    OR RMSE_MW + 0.000001 < MAE_MW

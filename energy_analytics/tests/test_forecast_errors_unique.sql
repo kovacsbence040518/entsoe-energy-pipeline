@@ -1,0 +1,10 @@
+
+SELECT
+    TIMESTAMP_UTC,
+    COUNTRY_CODE,
+    COUNT(*) AS RECORD_COUNT
+FROM {{ ref('fct_forecast_errors') }}
+GROUP BY
+    TIMESTAMP_UTC,
+    COUNTRY_CODE
+HAVING COUNT(*) > 1

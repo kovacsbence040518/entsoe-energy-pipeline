@@ -35,11 +35,11 @@ For one calendar day, `run_pipeline.py` does the following for each dataset: **e
 | Generation by source | `query_generation` | `RAW.GENERATION` | 15 min |
 | Day-ahead prices | `query_day_ahead_prices` | `RAW.DAY_AHEAD_PRICES` | 15 min |
 
-The history was backfilled for 90 days (9 July to 6 October 2026), and the Airflow DAG then keeps it up to date.
+The history was backfilled for 110 days (9 July to 26 October 2026), and the Airflow DAG then keeps it up to date.
 
 ## Tech stack
 
-Python 3.13 (pandas, entsoe-py) · Snowflake (SQL, Snowpark, Streamlit in Snowflake) · Apache Airflow 3.1 · Docker and Docker Compose · pytest · SQL views for analytics
+Python 3.13 (pandas, entsoe-py) · Snowflake (SQL, Snowpark, Streamlit in Snowflake) · Apache Airflow 3.1 · Docker and Docker Compose · pytest · SQL views for analytics · dbt Core (Snowflake adapter)
 
 ---
 
@@ -61,7 +61,7 @@ The DAG `energy_pipeline` runs daily. It processes the date **three days back**,
 
 ## Findings
 
-These are descriptive results from the 90-day backfill, not explanations.
+These are descriptive results from the 110-day backfill, not explanations.
 
 **1. Prices follow the sun.** Average day-ahead prices fall to roughly 60 to 70 EUR/MWh around midday and peak at roughly 230 to 250 EUR/MWh at 19:00, in all three countries, even though demand is also high at midday.
 
@@ -205,30 +205,131 @@ pytest
 
 ---
 
+## dbt Analytics and Data Quality
+
+The pipeline also uses **dbt Core with the Snowflake adapter** to manage SQL transformations and perform warehouse-level data quality checks.
+
+Python handles extraction, transformation, validation and loading into Snowflake. dbt then builds analytical models on top of the existing `ENERGY_DB.RAW` tables.
+
+### dbt Models
+
+The dbt project is located in `energy_analytics/`.
+
+| Model | Purpose |
+|---|---|
+| `stg_load` | Staging view for actual electricity consumption |
+| `stg_load_forecast` | Staging view for official ENTSO-E load forecasts |
+| `fct_forecast_errors` | Calculates signed, absolute and percentage forecast errors at 15-minute resolution |
+| `fct_daily_forecast_accuracy` | Aggregates daily MAE, RMSE, MAPE and forecast bias by country |
+
+Models use dbt `source()` and `ref()` functions to declare dependencies and determine the correct execution order.
+
+### Data Quality Tests
+
+The dbt project includes 10 automated data tests covering:
+
+- Required fields and accepted country codes in staging models.
+- Uniqueness of timestamp/country combinations after joining actual and forecast data.
+- Validity of calculated forecast accuracy metrics, including nonnegative errors and RMSE greater than or equal to MAE.
+
+These complement the existing Python validation by checking data and analytical results after loading into Snowflake.
+
+### Setup and Execution
+
+Install the dbt dependencies in a separate Python environment:
+
+```powershell
+py -3.13 -m venv ..\.venv-dbt
+..\.venv-dbt\Scripts\python.exe -m pip install -r requirements-dbt.txt
+```
+
+Configure the Snowflake connection in `~/.dbt/profiles.yml` using the profile name `energy_analytics` and environment variables for credentials.
+
+The dbt target uses:
+
+- Database: `ENERGY_DB`
+- Source schema: `RAW`
+- Output schema: `ANALYTICS`
+- Warehouse: `ENERGY_WH`
+
+From the project root, with the main Python environment active, run:
+
+```powershell
+python -c "import subprocess; from dotenv import load_dotenv; load_dotenv('.env'); subprocess.run([r'..\.venv-dbt\Scripts\dbt.exe', 'build', '--project-dir', 'energy_analytics'], check=True)"
+```
+
+This loads credentials from the local `.env` file and executes the dbt models and tests. Neither `.env` nor `~/.dbt/profiles.yml` should be committed to Git.
+
+### Verified Results
+
+The initial Snowflake execution completed successfully:
+
+- **4 SQL view models created**
+- **10 data tests passed**
+- **0 errors and 0 warnings**
+- **14/14 successful operations**
+
+The original Snowflake `RAW` tables remain unchanged by these dbt views.
+
+
+
 ## Repository structure
 
-```
-EnergyDataPipeLine/
+```text
+EnergyDataPipeline/
+├── .github/
+│   └── workflows/
+│       └── test.yml                    # GitHub Actions CI
+├── airflow/
+│   └── dags/
+│       └── energy_pipeline_dag.py      # Daily ETL scheduling
+├── dashboard/
+│   └── streamlit_app.py                # Streamlit in Snowflake
+├── data/                               # Generated data (git-ignored)
+│   ├── raw/
+│   └── processed/
+├── docs/
+│   └── images/                         # Dashboard and Airflow screenshots
+├── energy_analytics/                   # dbt project
+│   ├── models/
+│   │   ├── staging/
+│   │   │   ├── _sources.yml            # Snowflake RAW source definitions
+│   │   │   ├── _staging.yml            # Staging model tests
+│   │   │   ├── stg_load.sql
+│   │   │   └── stg_load_forecast.sql
+│   │   └── marts/
+│   │       ├── fct_forecast_errors.sql
+│   │       └── fct_daily_forecast_accuracy.sql
+│   ├── tests/
+│   │   ├── test_forecast_errors_unique.sql
+│   │   └── test_daily_forecast_accuracy.sql
+│   └── dbt_project.yml                 # dbt configuration
+├── scripts/
+│   └── check_snowflake_connection.py
+├── sql/                                # Snowflake setup, views and checks
 ├── src/
-│   ├── config.py            # countries, paths, per-dataset settings
-│   ├── extract.py           # ENTSO-E API -> raw CSV
-│   ├── transform.py         # raw CSV -> clean, UTC, long format
-│   ├── validate.py          # data quality checks
-│   ├── snowflake_load.py    # staging tables + single transaction
-│   └── run_pipeline.py      # entry point: --date YYYY-MM-DD
-├── airflow/dags/            # daily DAG
-├── dashboard/               # Streamlit in Snowflake app
-├── sql/                     # setup, views, checks, analysis, end-to-end test
-├── tests/                   # unit tests + manual integration test
-├── scripts/                 # connection check
-├── docs/images/             # screenshots used in this README
-├── Dockerfile               # pipeline image
-├── Dockerfile.airflow       # Airflow image
+│   ├── config.py                       # Dataset configuration
+│   ├── extract.py                      # ENTSO-E API extraction
+│   ├── transform.py                    # Data transformation
+│   ├── validate.py                     # Data quality validation
+│   ├── snowflake_load.py               # Transactional loading
+│   └── run_pipeline.py                 # Main ETL entry point
+├── tests/                              # Python unit and integration tests
+├── .env.example                        # Environment variable template
+├── .gitignore
+├── Dockerfile
+├── Dockerfile.airflow
 ├── compose.yaml
-├── requirements.txt
-├── requirements-dev.txt
-└── pytest.ini
+├── pytest.ini
+├── requirements.txt                    # ETL dependencies
+├── requirements-dev.txt                # Development and testing
+├── requirements-dbt.txt                # dbt dependencies
+├── requirements_dashboard.txt          # Streamlit dependencies
+└── README.md
 ```
+
+Generated files, local credentials, logs and virtual environments are excluded from version control.
+
 
 ## Limitations
 
@@ -242,7 +343,6 @@ EnergyDataPipeLine/
 
 - Key-pair authentication and a Snowflake resource monitor
 - One Airflow task per step (extract, transform, validate, load) for finer retries
-- A transformation layer with dbt
 - Time-series backtesting of a model against the official forecast
 - More countries and a lakehouse version of the same pipeline
 

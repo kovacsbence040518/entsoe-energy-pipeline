@@ -1,0 +1,12 @@
+
+version: 2
+
+sources:
+  - name: energy_raw
+    database: ENERGY_DB
+    schema: RAW
+    tables:
+      - name: load
+      - name: load_forecast
+      - name: generation
+      - name: day_ahead_prices
