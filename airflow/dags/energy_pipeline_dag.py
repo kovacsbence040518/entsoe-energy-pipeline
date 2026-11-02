@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 import subprocess
 
-from airflow.sdk import dag, task
+from airflow.sdk import dag, task, get_current_context
 
 
 @dag(
@@ -16,8 +16,9 @@ def energy_pipeline():
 
     @task(retries=3, retry_delay=timedelta(hours=2))
     def run_etl():
+        context = get_current_context()
         target_date = (
-            datetime.now() - timedelta(days=3)
+            context["data_interval_end"] - timedelta(days=3)
         ).strftime("%Y-%m-%d")
 
         subprocess.run(

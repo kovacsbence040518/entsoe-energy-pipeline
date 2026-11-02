@@ -1,0 +1,14 @@
+# Copy this file to ~/.dbt/profiles.yml, or merge this profile into that file.
+# Never commit passwords or your real profiles.yml.
+energy_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ENERGY_DB') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'ENERGY_WH') }}"
+      schema: ANALYTICS
+      threads: 4

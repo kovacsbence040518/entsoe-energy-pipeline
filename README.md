@@ -49,6 +49,8 @@ Python 3.13 (pandas, entsoe-py) · Snowflake (SQL, Snowpark, Streamlit in Snowfl
 |---|---|
 | ![Hourly profile](docs/images/dashboard_hourly_profile.png) | ![Forecast bias](docs/images/dashboard_forecast_bias.png) |
 
+Additional visuals, including the generation mix, actual-versus-forecast load, and price-versus-consumption scatter plot, are available in `docs/images/`.
+
 The app (`dashboard/streamlit_app.py`) runs inside Snowflake, so it needs no credentials of its own. Queries are cached for an hour. It shows consumption, prices, generation mix, actual vs forecast load, forecast bias, the hourly profile and price vs consumption.
 
 ## Orchestration
@@ -100,8 +102,8 @@ Correlation is not causation: season, temperature and fuel prices move demand an
 ### 1. Install
 
 ```bash
-git clone <https://github.com/kovacsbence040518/entsoe-energy-pipeline>
-cd EnergyDataPipeLine
+git clone https://github.com/kovacsbence040518/entsoe-energy-pipeline.git
+cd entsoe-energy-pipeline
 python -m venv .venv
 .venv\Scripts\activate            # Windows; on Linux/macOS: source .venv/bin/activate
 pip install -r requirements-dev.txt
@@ -154,7 +156,7 @@ Open <http://localhost:8080>. On first start, the admin password is printed in t
 
 ```powershell
 $start = Get-Date "2026-07-09"
-0..89 | ForEach-Object {
+0..109 | ForEach-Object {
     $d = $start.AddDays($_).ToString("yyyy-MM-dd")
     python src/run_pipeline.py --date $d
 }
@@ -243,7 +245,7 @@ py -3.13 -m venv ..\.venv-dbt
 ..\.venv-dbt\Scripts\python.exe -m pip install -r requirements-dbt.txt
 ```
 
-Configure the Snowflake connection in `~/.dbt/profiles.yml` using the profile name `energy_analytics` and environment variables for credentials.
+Copy `energy_analytics/profiles.yml.example` to `~/.dbt/profiles.yml` (or merge the `energy_analytics` profile into your existing file). Set the Snowflake connection values using environment variables; do not commit credentials. The example assumes the `.env` values are available to the dbt process.
 
 The dbt target uses:
 
@@ -262,14 +264,20 @@ This loads credentials from the local `.env` file and executes the dbt models an
 
 ### Verified Results
 
-The initial Snowflake execution completed successfully:
+A Snowflake dbt build was verified on 2 November 2026 after correcting the forecast-error sign:
 
 - **4 SQL view models created**
 - **10 data tests passed**
 - **0 errors and 0 warnings**
 - **14/14 successful operations**
 
-The original Snowflake `RAW` tables remain unchanged by these dbt views.
+![dbt lineage graph](docs/images/dbt_lineage.png)
+
+![Snowflake raw table counts](docs/images/snowflake_table_counts.png)
+
+The original Snowflake `RAW` tables remain unchanged by these dbt views. The signed forecast error uses **actual − forecast** in both the original SQL views and dbt models; a negative value indicates an overforecast.
+
+**SQL views and dbt:** The manually defined `sql/02_view.sql` analytics views power the Streamlit dashboard. Separately, dbt provides version-controlled staging and forecast-accuracy models with tests and lineage. Some forecast calculations deliberately overlap to make dbt modeling and validation demonstrable; the dbt models are not automatically substituted into the dashboard.
 
 
 
@@ -293,8 +301,8 @@ EnergyDataPipeline/
 ├── energy_analytics/                   # dbt project
 │   ├── models/
 │   │   ├── staging/
-│   │   │   ├── _sources.yml            # Snowflake RAW source definitions
-│   │   │   ├── _staging.yml            # Staging model tests
+│   │   │   ├── _sources.yaml            # Snowflake RAW source definitions
+│   │   │   ├── _staging.yaml            # Staging model tests
 │   │   │   ├── stg_load.sql
 │   │   │   └── stg_load_forecast.sql
 │   │   └── marts/
@@ -303,6 +311,7 @@ EnergyDataPipeline/
 │   ├── tests/
 │   │   ├── test_forecast_errors_unique.sql
 │   │   └── test_daily_forecast_accuracy.sql
+│   ├── profiles.yml.example            # Credential-free dbt profile template
 │   └── dbt_project.yml                 # dbt configuration
 ├── scripts/
 │   └── check_snowflake_connection.py
@@ -317,6 +326,7 @@ EnergyDataPipeline/
 ├── tests/                              # Python unit and integration tests
 ├── .env.example                        # Environment variable template
 ├── .gitignore
+├── LICENSE                             # MIT License
 ├── Dockerfile
 ├── Dockerfile.airflow
 ├── compose.yaml
@@ -336,7 +346,7 @@ Generated files, local credentials, logs and virtual environments are excluded f
 - Three countries and four datasets, at 15-minute resolution.
 - Airflow runs locally in Docker, so it only runs while Docker is running.
 - Password authentication is used, and key-pair authentication would be the better choice for production.
-- The Snowflake account is a trial. The code, SQL, screenshots and a demo recording are kept in this repository, and the project can be pointed at a different account via `.env`.
+- The Snowflake account is a trial. Code, SQL, and screenshots are kept in this repository so the implementation remains reviewable after the trial ends. A new account can be configured via `.env`.
 - Findings are descriptive. I did not model or explain the forecast bias.
 
 ## Possible next steps

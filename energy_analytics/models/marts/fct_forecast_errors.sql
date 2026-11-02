@@ -7,13 +7,13 @@ SELECT
     actual.ACTUAL_LOAD_MW,
     forecast.FORECAST_LOAD_MW,
 
-    forecast.FORECAST_LOAD_MW - actual.ACTUAL_LOAD_MW
+    actual.ACTUAL_LOAD_MW - forecast.FORECAST_LOAD_MW
         AS FORECAST_ERROR_MW,
 
-    ABS(forecast.FORECAST_LOAD_MW - actual.ACTUAL_LOAD_MW)
+    ABS(actual.ACTUAL_LOAD_MW - forecast.FORECAST_LOAD_MW)
         AS ABSOLUTE_ERROR_MW,
 
-    ABS(forecast.FORECAST_LOAD_MW - actual.ACTUAL_LOAD_MW)
+    ABS(actual.ACTUAL_LOAD_MW - forecast.FORECAST_LOAD_MW)
         / NULLIF(actual.ACTUAL_LOAD_MW, 0) * 100
         AS ABSOLUTE_PERCENTAGE_ERROR
 
